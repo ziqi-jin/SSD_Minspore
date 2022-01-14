@@ -33,7 +33,7 @@ from src.dataset import create_ssd_dataset, create_mindrecord
 from src.lr_schedule import get_lr
 from src.init_params import init_net_param, filter_checkpoint_parameter
 
-set_seed(1)
+set_seed(1
 
 def get_args():
     """get arguments"""

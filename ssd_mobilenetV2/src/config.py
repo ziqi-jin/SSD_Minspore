@@ -51,8 +51,8 @@ config = ed({
 
     # `mindrecord_dir` and `coco_root` are better to use absolute path.
     "feature_extractor_base_param": "",
-    "mindrecord_dir": "/cache/MindRecord_COCO",
-    "coco_root": "/cache/coco2017",
+    "mindrecord_dir": "/data1/mobilenet_record/MindRecord_COCO",
+    "coco_root": "/data1/coco2017",
     "train_data_type": "train2017",
     "val_data_type": "val2017",
     "instances_set": "annotations/instances_{}.json",

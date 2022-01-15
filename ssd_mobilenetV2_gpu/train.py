@@ -89,8 +89,6 @@ def main():
         context.set_context(device_id=args_opt.device_id)
     mindrecord_file = create_mindrecord(args_opt.dataset, "ssd.mindrecord", True)
     if args_opt.only_create_dataset:
-        if args_opt.modelarts_mode:
-            mox.file.copy_parallel(config.mindrecord_dir, args_opt.train_url)
         return
 
     loss_scale = float(args_opt.loss_scale)

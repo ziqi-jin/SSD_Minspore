@@ -135,9 +135,9 @@ def main():
     callback = [TimeMonitor(data_size=dataset_size), LossMonitor(), ckpoint_cb]
     model = Model(net)
     dataset_sink_mode = False
-    if args_opt.mode == "sink":
-        print("In sink mode, one epoch return a loss.")
-        dataset_sink_mode = True
+    # if args_opt.mode == "sink":
+    #     print("In sink mode, one epoch return a loss.")
+    #     dataset_sink_mode = True
     print("Start train SSD, the first epoch will be slower because of the graph compilation.")
     model.train(args_opt.epoch_size, dataset, callbacks=callback, dataset_sink_mode=dataset_sink_mode)
     if args_opt.modelarts_mode:

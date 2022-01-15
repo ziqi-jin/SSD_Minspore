@@ -50,7 +50,6 @@ then
     --lr=$LR \
     --dataset=$DATASET \
     --device_num=$RANK_SIZE  \
-    --device_id=$DEVICE_ID  \
     --epoch_size=$EPOCH_SIZE
 fi
 #for((i=0;i<RANK_SIZE;i++))

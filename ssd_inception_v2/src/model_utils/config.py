@@ -54,9 +54,9 @@ def parse_cli_to_yaml(parser, cfg, helper=None, choices=None, cfg_path="ssd300_c
         parser: Parent parser.
         cfg: Base configuration.
         helper: Helper description.
-        cfg_path: Path to the default yaml config.
+        cfg_path: Path to the default yaml config_inc.
     """
-    parser = argparse.ArgumentParser(description="[REPLACE THIS at config.py]",
+    parser = argparse.ArgumentParser(description="[REPLACE THIS at config_inc.py]",
                                      parents=[parser])
     helper = {} if helper is None else helper
     choices = {} if choices is None else choices
@@ -76,10 +76,10 @@ def parse_cli_to_yaml(parser, cfg, helper=None, choices=None, cfg_path="ssd300_c
 
 def parse_yaml(yaml_path):
     """
-    Parse the yaml config file.
+    Parse the yaml config_inc file.
 
     Args:
-        yaml_path: Path to the yaml config.
+        yaml_path: Path to the yaml config_inc.
     """
     with open(yaml_path, 'r') as fin:
         try:
@@ -95,7 +95,7 @@ def parse_yaml(yaml_path):
             elif len(cfgs) == 3:
                 cfg, cfg_helper, cfg_choices = cfgs
             else:
-                raise ValueError("At most 3 docs (config description for help, choices) are supported in config yaml")
+                raise ValueError("At most 3 docs (config_inc description for help, choices) are supported in config_inc yaml")
             print(cfg_helper)
         except:
             raise ValueError("Failed to parse yaml")
@@ -104,7 +104,7 @@ def parse_yaml(yaml_path):
 
 def merge(args, cfg):
     """
-    Merge the base config from yaml file and command line arguments.
+    Merge the base config_inc from yaml file and command line arguments.
 
     Args:
         args: Command line arguments.

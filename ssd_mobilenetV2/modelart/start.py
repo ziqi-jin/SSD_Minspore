@@ -206,7 +206,7 @@ def get_args():
     assert args_opt.epoch_size > args_opt.pre_trained_epoch_size, \
         "Total epoch_size should be bigger than pre_trained_epoch_size"
 
-    # set config
+    # set config_inc
 
     if args_opt.num_classes != -1:
         config.classes = read_classes(

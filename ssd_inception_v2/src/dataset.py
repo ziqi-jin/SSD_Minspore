@@ -548,7 +548,7 @@ def create_mindrecord(dataset="coco", prefix="ssd.mindrecord", is_training=True)
 
     print("Start create dataset!")
 
-    # It will generate mindrecord file in config.mindrecord_dir,
+    # It will generate mindrecord file in config_inc.mindrecord_dir,
     # and the file name is ssd.mindrecord0, 1, ... file_num.
 
     mindrecord_dir = os.path.join(config.data_path, config.mindrecord_dir)

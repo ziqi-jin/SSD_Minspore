@@ -168,7 +168,7 @@ class FlattenConcat(nn.Cell):
     Concatenate predictions into a single tensor.
 
     Args:
-        config (dict): The default config of SSD.
+        config (dict): The default config_inc of SSD.
 
     Returns:
         Tensor, flatten predictions.
@@ -195,7 +195,7 @@ class MultiBox(nn.Cell):
     Multibox conv layers. Each multibox layer contains class conf scores and localization predictions.
 
     Args:
-        config (dict): The default config of SSD.
+        config (dict): The default config_inc of SSD.
 
     Returns:
         Tensor, localization predictions.
@@ -235,7 +235,7 @@ class WeightSharedMultiBox(nn.Cell):
     All box predictors shares the same conv weight in different features.
 
     Args:
-        config (dict): The default config of SSD.
+        config (dict): The default config_inc of SSD.
         loc_cls_shared_addition(bool): Whether the location predictor and classifier prediction share the
                                        same addition layer.
     Returns:
@@ -351,7 +351,7 @@ class SSDWithLossCell(nn.Cell):
 
     Args:
         network (Cell): The training network.
-        config (dict): SSD config.
+        config (dict): SSD config_inc.
 
     Returns:
         Tensor, the loss of the network.
@@ -450,7 +450,7 @@ class SsdInferWithDecoder(nn.Cell):
     Args:
         network (Cell): the origin ssd infer network without bbox decoder.
         default_boxes (Tensor): the default_boxes from anchor generator
-        config (dict): ssd config
+        config (dict): ssd config_inc
     Returns:
         Tensor, the locations for bbox after decoder representing (y0,x0,y1,x1)
         Tensor, the prediction labels.
@@ -482,7 +482,7 @@ class SsdInferWithDecoder(nn.Cell):
 
 class SSDInceptionV2(nn.Cell):
     """"
-    Construct SSD-InceptionV2 with loss function based on config
+    Construct SSD-InceptionV2 with loss function based on config_inc
     """
     def __init__(self, config, use_explicit_padding=False, depth_multiplier=1, use_depthwise=False):
         super(SSDInceptionV2, self).__init__()

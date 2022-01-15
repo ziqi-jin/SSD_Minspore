@@ -148,7 +148,7 @@ class FlattenConcat(nn.Cell):
     Concatenate predictions into a single tensor.
 
     Args:
-        config (dict): The default config of SSD.
+        config (dict): The default config_inc of SSD.
 
     Returns:
         Tensor, flatten predictions.
@@ -173,7 +173,7 @@ class MultiBox(nn.Cell):
     Multibox conv layers. Each multibox layer contains class conf scores and localization predictions.
 
     Args:
-        config (dict): The default config of SSD.
+        config (dict): The default config_inc of SSD.
 
     Returns:
         Tensor, localization predictions.
@@ -214,7 +214,7 @@ class SSD320(nn.Cell):
 
     Args:
         backbone (Cell): Backbone Network.
-        config (dict): The default config of SSD.
+        config (dict): The default config_inc of SSD.
 
     Returns:
         Tensor, localization predictions.
@@ -222,7 +222,7 @@ class SSD320(nn.Cell):
 
     Examples:backbone
          SSD320(backbone=resnet34(num_classes=None),
-                config=config).
+                config_inc=config_inc).
     """
     def __init__(self, backbone, config, is_training=True):
         super(SSD320, self).__init__()
@@ -300,7 +300,7 @@ class SSDWithLossCell(nn.Cell):
 
     Args:
         network (Cell): The training network.
-        config (dict): SSD config.
+        config (dict): SSD config_inc.
 
     Returns:
         Tensor, the loss of the network.
@@ -467,7 +467,7 @@ class SsdInferWithDecoder(nn.Cell):
     Args:
         network (Cell): the origin ssd infer network without bbox decoder.
         default_boxes (Tensor): the default_boxes from anchor generator
-        config (dict): ssd config
+        config (dict): ssd config_inc
     Returns:
         Tensor, the locations for bbox after decoder representing (y0,x0,y1,x1)
         Tensor, the prediction labels.

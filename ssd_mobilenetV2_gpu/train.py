@@ -95,7 +95,7 @@ def main():
 
     # When create MindDataset, using the fitst mindrecord file, such as ssd.mindrecord0.
     dataset = create_ssd_dataset(mindrecord_file, repeat_num=1, batch_size=args_opt.batch_size,
-                                 device_num=device_num, rank=rank)
+                                 device_num=device_num, rank=rank,num_parallel_workers=8)
 
     dataset_size = dataset.get_dataset_size()
     print("Create dataset done!")

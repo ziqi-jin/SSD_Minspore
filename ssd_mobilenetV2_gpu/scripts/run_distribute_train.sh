@@ -42,42 +42,52 @@ DATASET=$4
 PRE_TRAINED=$6
 PRE_TRAINED_EPOCH_SIZE=$7
 export RANK_TABLE_FILE=$5
-
-for((i=0;i<RANK_SIZE;i++))
-do
-    export DEVICE_ID=$i
-    rm -rf LOG$i
-    mkdir ./LOG$i
-    cp ./*.py ./LOG$i
-    cp -r ./src ./LOG$i
-    cp -r ./scripts ./LOG$i
-    cd ./LOG$i || exit
-    export RANK_ID=$i
-    echo "start training for rank $i, device $DEVICE_ID"
-    env > env.log
-    if [ $# == 5 ]
-    then
-        python train.py  \
-        --distribute=True  \
-        --lr=$LR \
-        --dataset=$DATASET \
-        --device_num=$RANK_SIZE  \
-        --device_id=$DEVICE_ID  \
-        --epoch_size=$EPOCH_SIZE > log.txt 2>&1 &
-    fi
-
-    if [ $# == 7 ]
-    then
-        python train.py  \
-        --distribute=True  \
-        --lr=$LR \
-        --dataset=$DATASET \
-        --device_num=$RANK_SIZE  \
-        --device_id=$DEVICE_ID  \
-        --pre_trained=$PRE_TRAINED \
-        --pre_trained_epoch_size=$PRE_TRAINED_EPOCH_SIZE \
-        --epoch_size=$EPOCH_SIZE > log.txt 2>&1 &
-    fi
-
-    cd ../
-done
+if [ $# == 5 ]
+then
+    mpirun -allow-run-as-root -n $RANK_SIZE --output-filename log_output --merge-stderr-to-stdout \
+    python train.py  \
+    --distribute=True  \
+    --lr=$LR \
+    --dataset=$DATASET \
+    --device_num=$RANK_SIZE  \
+    --device_id=$DEVICE_ID  \
+    --epoch_size=$EPOCH_SIZE
+fi
+#for((i=0;i<RANK_SIZE;i++))
+#do
+#    export DEVICE_ID=$i
+#    rm -rf LOG$i
+#    mkdir ./LOG$i
+#    cp ./*.py ./LOG$i
+#    cp -r ./src ./LOG$i
+#    cp -r ./scripts ./LOG$i
+#    cd ./LOG$i || exit
+#    export RANK_ID=$i
+#    echo "start training for rank $i, device $DEVICE_ID"
+#    env > env.log
+#    if [ $# == 5 ]
+#    then
+#        python train.py  \
+#        --distribute=True  \
+#        --lr=$LR \
+#        --dataset=$DATASET \
+#        --device_num=$RANK_SIZE  \
+#        --device_id=$DEVICE_ID  \
+#        --epoch_size=$EPOCH_SIZE > log.txt 2>&1 &
+#    fi
+#
+#    if [ $# == 7 ]
+#    then
+#        python train.py  \
+#        --distribute=True  \
+#        --lr=$LR \
+#        --dataset=$DATASET \
+#        --device_num=$RANK_SIZE  \
+#        --device_id=$DEVICE_ID  \
+#        --pre_trained=$PRE_TRAINED \
+#        --pre_trained_epoch_size=$PRE_TRAINED_EPOCH_SIZE \
+#        --epoch_size=$EPOCH_SIZE > log.txt 2>&1 &
+#    fi
+#
+#    cd ../
+#done

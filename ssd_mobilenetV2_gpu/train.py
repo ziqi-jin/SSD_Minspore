@@ -71,7 +71,7 @@ def get_args():
 
 def main():
     args_opt = get_args()
-    context.set_context(mode=context.PYNATIVE_MODE, device_target=args_opt.run_platform)
+    context.set_context(mode=context.GRAPH_MODE, device_target=args_opt.run_platform)
     if args_opt.distribute:
         if os.getenv("DEVICE_ID", "not_set").isdigit():
             context.set_context(device_id=int(os.getenv("DEVICE_ID")))

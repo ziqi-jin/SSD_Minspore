@@ -15,12 +15,55 @@
 """Coco metrics utils"""
 
 import json
+
 import numpy as np
-from .config import config
+from mindspore import Tensor
+from src.model_utils.config import config
+
+
+def apply_eval(eval_param_dict):
+    """
+    Meausre mAP metric by dict of parameters
+
+    Args:
+        eval_param_dict: Dict with parameter to evaluate
+
+    Returns:
+        Value of mAP metric
+    """
+    net = eval_param_dict["net"]
+    net.set_train(False)
+    ds = eval_param_dict["dataset"]
+    anno_json = eval_param_dict["anno_json"]
+    pred_data = []
+    for data in ds.create_dict_iterator(output_numpy=True, num_epochs=1):
+        img_id = data['img_id']
+        img_np = data['image']
+        image_shape = data['image_shape']
+
+        output = net(Tensor(img_np))
+        for batch_idx in range(img_np.shape[0]):
+            pred_data.append({"boxes": output[0].asnumpy()[batch_idx],
+                              "box_scores": output[1].asnumpy()[batch_idx],
+                              "img_id": int(np.squeeze(img_id[batch_idx])),
+                              "image_shape": image_shape[batch_idx]})
+    mAP = metrics(pred_data, anno_json)
+    return mAP
 
 
 def apply_nms(all_boxes, all_scores, thres, max_boxes):
-    """Apply NMS to bboxes."""
+    """
+    Apply NMS to bounding boxes
+
+    Args:
+        all_boxes: All detected boxes
+        all_scores: All scores for detected boxes
+        thres: Threshold value
+        max_boxes: Maximum boxes to left in predictions
+
+    Returns:
+        Filtered boxes
+    """
     y1 = all_boxes[:, 0]
     x1 = all_boxes[:, 1]
     y2 = all_boxes[:, 2]
@@ -55,7 +98,16 @@ def apply_nms(all_boxes, all_scores, thres, max_boxes):
 
 
 def metrics(pred_data, anno_json):
-    """Calculate mAP of predicted bboxes."""
+    """
+    Calculate mAP of predicted bounding boxes
+
+    Args:
+        pred_data: Predicted bounding boxes with scores
+        anno_json: JSON with annotation to evaluation data
+
+    Returns:
+        Metrics for COCO
+    """
     from pycocotools.coco import COCO
     from pycocotools.cocoeval import COCOeval
     num_classes = config.num_classes

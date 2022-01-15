@@ -15,19 +15,33 @@
 
 """SSD net based MobilenetV2."""
 
-import mindspore.common.dtype as mstype
 import mindspore as ms
+import mindspore.common.dtype as mstype
 import mindspore.nn as nn
 from mindspore import context, Tensor
-from mindspore.context import ParallelMode
-from mindspore.parallel._auto_parallel_context import auto_parallel_context
 from mindspore.communication.management import get_group_size
-from mindspore.ops import operations as P
-from mindspore.ops import functional as F
+from mindspore.context import ParallelMode
 from mindspore.ops import composite as C
+from mindspore.ops import functional as F
+from mindspore.ops import operations as P
+from mindspore.parallel._auto_parallel_context import auto_parallel_context
+
+from .feature_map_generators import MultiResolutionFeatureMaps
+from .inception_v2 import inception_v2
+
 
 def _make_divisible(v, divisor, min_value=None):
-    """nsures that all layers have a channel number that is divisible by 8."""
+    """
+    Ensures that all layers have a channel number that is divisible by divisor.
+
+    Args:
+        v: Value to check
+        divisor: Divisor to check the value
+        min_value: Minimum value of input parameter
+
+    Returns:
+        Processed value
+    """
     if min_value is None:
         min_value = divisor
     new_v = max(min_value, int(v + divisor / 2) // divisor * divisor)
@@ -38,21 +52,25 @@ def _make_divisible(v, divisor, min_value=None):
 
 
 def _conv2d(in_channel, out_channel, kernel_size=3, stride=1, pad_mod='same'):
+    """Setup default parameter to Conv2D. Like partial mechanism"""
     return nn.Conv2d(in_channel, out_channel, kernel_size=kernel_size, stride=stride,
                      padding=0, pad_mode=pad_mod, has_bias=True)
 
 
 def _bn(channel):
+    """Setup default parameter to BatchNorm2d. Like partial mechanism"""
     return nn.BatchNorm2d(channel, eps=1e-3, momentum=0.97,
                           gamma_init=1, beta_init=0, moving_mean_init=0, moving_var_init=1)
 
+
 def _last_conv2d(in_channel, out_channel, kernel_size=3, stride=1, pad_mod='same', pad=0):
+    """Setup default parameter to Conv2D. Like partial mechanism"""
     in_channels = in_channel
     out_channels = in_channel
-    conv1 = nn.Conv2d(in_channels, out_channels, kernel_size, stride, pad_mode='same',
-                      padding=pad)
-    conv2 = _conv2d(in_channel, out_channel, kernel_size=1)
-    return nn.SequentialCell([conv1, _bn(in_channel), nn.ReLU6(), conv2])
+    depthwise_conv = nn.Conv2d(in_channels, out_channels, kernel_size, stride, pad_mode='same',
+                               padding=pad, group=in_channels)
+    conv = _conv2d(in_channel, out_channel, kernel_size=1)
+    return nn.SequentialCell([depthwise_conv, _bn(in_channel), nn.ReLU6(), conv])
 
 
 class ConvBNReLU(nn.Cell):
@@ -91,6 +109,7 @@ class ConvBNReLU(nn.Cell):
         self.features = nn.SequentialCell(layers)
 
     def construct(self, x):
+        """Construct a forward graph"""
         output = self.features(x)
         return output
 
@@ -134,6 +153,7 @@ class InvertedResidual(nn.Cell):
         self.relu = nn.ReLU6()
 
     def construct(self, x):
+        """Construct a forward graph"""
         identity = x
         x = self.conv(x)
         if self.use_res_connect:
@@ -158,7 +178,9 @@ class FlattenConcat(nn.Cell):
         self.num_ssd_boxes = config.num_ssd_boxes
         self.concat = P.Concat(axis=1)
         self.transpose = P.Transpose()
+
     def construct(self, inputs):
+        """Construct a forward graph"""
         output = ()
         batch_size = F.shape(inputs[0])[0]
         for x in inputs:
@@ -198,6 +220,7 @@ class MultiBox(nn.Cell):
         self.flatten_concat = FlattenConcat(config)
 
     def construct(self, inputs):
+        """Construct a forward graph"""
         loc_outputs = ()
         cls_outputs = ()
         for i in range(len(self.multi_loc_layers)):
@@ -206,58 +229,85 @@ class MultiBox(nn.Cell):
         return self.flatten_concat(loc_outputs), self.flatten_concat(cls_outputs)
 
 
-
-
-class SSD320(nn.Cell):
+class WeightSharedMultiBox(nn.Cell):
     """
-    SSD320 Network. Default backbone is resnet34.
+    Weight shared Multi-box conv layers. Each multi-box layer contains class conf scores and localization predictions.
+    All box predictors shares the same conv weight in different features.
 
     Args:
-        backbone (Cell): Backbone Network.
         config (dict): The default config_inc of SSD.
-
+        loc_cls_shared_addition(bool): Whether the location predictor and classifier prediction share the
+                                       same addition layer.
     Returns:
         Tensor, localization predictions.
         Tensor, class conf scores.
-
-    Examples:backbone
-         SSD320(backbone=resnet34(num_classes=None),
-                config_inc=config_inc).
     """
-    def __init__(self, backbone, config, is_training=True):
-        super(SSD320, self).__init__()
+    def __init__(self, config, loc_cls_shared_addition=False):
+        super(WeightSharedMultiBox, self).__init__()
+        num_classes = config.num_classes
+        out_channels = config.extras_out_channels[0]
+        num_default = config.num_default[0]
+        num_features = len(config.feature_size)
+        num_addition_layers = config.num_addition_layers
+        self.loc_cls_shared_addition = loc_cls_shared_addition
 
-        self.backbone = backbone
-        in_channels = config.extras_in_channels
-        out_channels = config.extras_out_channels
-        ratios = config.extras_ratio
-        strides = config.extras_strides
-        residual_list = []
-        for i in range(2, len(in_channels)):
-            residual = InvertedResidual(in_channels[i], out_channels[i], stride=strides[i],
-                                        expand_ratio=ratios[i], last_relu=True)
-            residual_list.append(residual)
-        self.multi_residual = nn.layer.CellList(residual_list)
-        self.multi_box = MultiBox(config)
-        self.is_training = is_training
-        if not is_training:
-            self.activation = P.Sigmoid()
+        if not loc_cls_shared_addition:
+            loc_convs = [
+                _conv2d(out_channels, out_channels, 3, 1) for x in range(num_addition_layers)
+            ]
+            cls_convs = [
+                _conv2d(out_channels, out_channels, 3, 1) for x in range(num_addition_layers)
+            ]
+            addition_loc_layer_list = []
+            addition_cls_layer_list = []
+            for _ in range(num_features):
+                addition_loc_layer = [
+                    ConvBNReLU(out_channels, out_channels, 3, 1, 1, loc_convs[x]) for x in range(num_addition_layers)
+                ]
+                addition_cls_layer = [
+                    ConvBNReLU(out_channels, out_channels, 3, 1, 1, cls_convs[x]) for x in range(num_addition_layers)
+                ]
+                addition_loc_layer_list.append(nn.SequentialCell(addition_loc_layer))
+                addition_cls_layer_list.append(nn.SequentialCell(addition_cls_layer))
+            self.addition_layer_loc = nn.CellList(addition_loc_layer_list)
+            self.addition_layer_cls = nn.CellList(addition_cls_layer_list)
+        else:
+            convs = [
+                _conv2d(out_channels, out_channels, 3, 1) for x in range(num_addition_layers)
+            ]
+            addition_layer_list = []
+            for _ in range(num_features):
+                addition_layers = [
+                    ConvBNReLU(out_channels, out_channels, 3, 1, 1, convs[x]) for x in range(num_addition_layers)
+                ]
+                addition_layer_list.append(nn.SequentialCell(addition_layers))
+            self.addition_layer = nn.SequentialCell(addition_layer_list)
 
-    def construct(self, x):
-        """return pred_loc and pred_label"""
-        layer_out_13, output = self.backbone(x)
-        multi_feature = (layer_out_13, output)
-        feature = output
-        for residual in self.multi_residual:
-            feature = residual(feature)
-            multi_feature += (feature,)
-        pred_loc, pred_label = self.multi_box(multi_feature)
-        if not self.is_training:
-            pred_label = self.activation(pred_label)
-        pred_loc = F.cast(pred_loc, mstype.float32)
-        pred_label = F.cast(pred_label, mstype.float32)
-        return pred_loc, pred_label
+        loc_layers = [_conv2d(out_channels, 4 * num_default,
+                              kernel_size=3, stride=1, pad_mod='same')]
+        cls_layers = [_conv2d(out_channels, num_classes * num_default,
+                              kernel_size=3, stride=1, pad_mod='same')]
 
+        self.loc_layers = nn.SequentialCell(loc_layers)
+        self.cls_layers = nn.SequentialCell(cls_layers)
+        self.flatten_concat = FlattenConcat(config)
+
+    def construct(self, inputs):
+        """Construct a forward graph"""
+        loc_outputs = ()
+        cls_outputs = ()
+        num_heads = len(inputs)
+        for i in range(num_heads):
+            if self.loc_cls_shared_addition:
+                features = self.addition_layer[i](inputs[i])
+                loc_outputs += (self.loc_layers(features),)
+                cls_outputs += (self.cls_layers(features),)
+            else:
+                features = self.addition_layer_loc[i](inputs[i])
+                loc_outputs += (self.loc_layers(features),)
+                features = self.addition_layer_cls[i](inputs[i])
+                cls_outputs += (self.cls_layers(features),)
+        return self.flatten_concat(loc_outputs), self.flatten_concat(cls_outputs)
 
 
 class SigmoidFocalClassificationLoss(nn.Cell):
@@ -283,6 +333,7 @@ class SigmoidFocalClassificationLoss(nn.Cell):
         self.alpha = alpha
 
     def construct(self, logits, label):
+        """Construct a forward graph"""
         label = self.onehot(label, F.shape(logits)[-1], self.on_value, self.off_value)
         sigmiod_cross_entropy = self.sigmiod_cross_entropy(logits, label)
         sigmoid = self.sigmoid(logits)
@@ -311,13 +362,12 @@ class SSDWithLossCell(nn.Cell):
         self.less = P.Less()
         self.tile = P.Tile()
         self.reduce_sum = P.ReduceSum()
-        self.reduce_mean = P.ReduceMean()
         self.expand_dims = P.ExpandDims()
         self.class_loss = SigmoidFocalClassificationLoss(config.gamma, config.alpha)
         self.loc_loss = nn.SmoothL1Loss()
 
     def construct(self, x, gt_loc, gt_label, num_matched_boxes):
-        """get loss"""
+        """Construct a forward graph"""
         pred_loc, pred_label = self.network(x)
         mask = F.cast(self.less(0, gt_label), mstype.float32)
         num_matched_boxes = self.reduce_sum(F.cast(num_matched_boxes, mstype.float32))
@@ -325,7 +375,7 @@ class SSDWithLossCell(nn.Cell):
         # Localization Loss
         mask_loc = self.tile(self.expand_dims(mask, -1), (1, 1, 4))
         smooth_l1 = self.loc_loss(pred_loc, gt_loc) * mask_loc
-        loss_loc = self.reduce_sum(self.reduce_mean(smooth_l1, -1), -1)
+        loss_loc = self.reduce_sum(self.reduce_sum(smooth_l1, -1), -1)
 
         # Classification Loss
         loss_cls = self.class_loss(pred_label, gt_label)
@@ -337,6 +387,7 @@ class SSDWithLossCell(nn.Cell):
 grad_scale = C.MultitypeFuncGraph("grad_scale")
 @grad_scale.register("Tensor", "Tensor")
 def tensor_grad_scale(scale, grad):
+    """Tensor grad scale"""
     return grad * P.Reciprocal()(scale)
 
 
@@ -377,7 +428,7 @@ class TrainingWrapper(nn.Cell):
         self.hyper_map = C.HyperMap()
 
     def construct(self, *args):
-        """opt"""
+        """Construct a forward graph"""
         weights = self.weights
         loss = self.network(*args)
         sens = P.Fill()(P.DType()(loss), P.Shape()(loss), self.sens)
@@ -390,74 +441,6 @@ class TrainingWrapper(nn.Cell):
             grads = C.clip_by_global_norm(grads)
         self.optimizer(grads)
         return loss
-
-
-class SSDWithMobileNetV2(nn.Cell):
-    """
-    MobileNetV2 architecture for SSD backbone.
-
-    Args:
-        width_mult (int): Channels multiplier for round to 8/16 and others. Default is 1.
-        inverted_residual_setting (list): Inverted residual settings. Default is None
-        round_nearest (list): Channel round to. Default is 8
-    Returns:
-        Tensor, the 13th feature after ConvBNReLU in MobileNetV2.
-        Tensor, the last feature in MobileNetV2.
-
-    Examples:
-        >>> SSDWithMobileNetV2()
-    """
-    def __init__(self, width_mult=1.0, inverted_residual_setting=None, round_nearest=8):
-        super(SSDWithMobileNetV2, self).__init__()
-        block = InvertedResidual
-        input_channel = 32
-        last_channel = 1280
-
-        if inverted_residual_setting is None:
-            inverted_residual_setting = [
-                # t, c, n, s
-                [1, 16, 1, 1],
-                [6, 24, 2, 2],
-                [6, 32, 3, 2],
-                [6, 64, 4, 2],
-                [6, 96, 3, 1],
-                [6, 160, 3, 2],
-                [6, 320, 1, 1],
-            ]
-        if len(inverted_residual_setting[0]) != 4:
-            raise ValueError("inverted_residual_setting should be non-empty "
-                             "or a 4-element list, got {}".format(inverted_residual_setting))
-
-        #building first layer
-        input_channel = _make_divisible(input_channel * width_mult, round_nearest)
-        self.last_channel = _make_divisible(last_channel * max(1.0, width_mult), round_nearest)
-        features = [ConvBNReLU(3, input_channel, stride=2)]
-        # building inverted residual blocks
-        layer_index = 0
-        for t, c, n, s in inverted_residual_setting:
-            output_channel = _make_divisible(c * width_mult, round_nearest)
-            for i in range(n):
-                if layer_index == 13:
-                    hidden_dim = int(round(input_channel * t))
-                    self.expand_layer_conv_13 = ConvBNReLU(input_channel, hidden_dim, kernel_size=1)
-                stride = s if i == 0 else 1
-                features.append(block(input_channel, output_channel, stride, expand_ratio=t))
-                input_channel = output_channel
-                layer_index += 1
-        # building last several layers
-        features.append(ConvBNReLU(input_channel, self.last_channel, kernel_size=1))
-
-        self.features_1 = nn.SequentialCell(features[:14])
-        self.features_2 = nn.SequentialCell(features[14:])
-
-    def construct(self, x):
-        out = self.features_1(x)
-        expand_layer_conv_13 = self.expand_layer_conv_13(out)
-        out = self.features_2(out)
-        return expand_layer_conv_13, out
-
-    def get_out_channels(self):
-        return self.last_channel
 
 
 class SsdInferWithDecoder(nn.Cell):
@@ -481,7 +464,7 @@ class SsdInferWithDecoder(nn.Cell):
         self.prior_scaling_wh = config.prior_scaling[1]
 
     def construct(self, x):
-        """get pred_xy and pred_label"""
+        """Construct a forward graph"""
         pred_loc, pred_label = self.network(x)
 
         default_bbox_xy = self.default_boxes[..., :2]
@@ -496,5 +479,41 @@ class SsdInferWithDecoder(nn.Cell):
         pred_xy = P.Minimum()(pred_xy, 1)
         return pred_xy, pred_label
 
-def ssd_mobilenet_v2(**kwargs):
-    return SSDWithMobileNetV2(**kwargs)
+
+class SSDInceptionV2(nn.Cell):
+    """"
+    Construct SSD-InceptionV2 with loss function based on config_inc
+    """
+    def __init__(self, config, use_explicit_padding=False, depth_multiplier=1, use_depthwise=False):
+        super(SSDInceptionV2, self).__init__()
+        self.lable_num = config.num_classes
+        self.use_explicit_padding = use_explicit_padding
+        self.use_depthwise = use_depthwise
+        self.box = MultiBox(config)
+        self.feature_extractor = inception_v2()
+        self.feature_map_channel = self.feature_extractor.feature_map_channels
+
+        self.feature_map_layout = {
+            'from_layer': ['Mixed_4c', 'Mixed_5c', '', '', '', ''],
+            'layer_depth': [-1, -1, 512, 256, 256, 128],
+            'use_explicit_padding': self.use_explicit_padding,
+            'use_depthwise': self.use_depthwise,
+        }
+
+        self.feature_maps = MultiResolutionFeatureMaps(
+            feature_map_layout=self.feature_map_layout,
+            feature_map_channels=self.feature_map_channel,
+            depth_multiplier=depth_multiplier
+        )
+
+    def construct(self, inputs):
+        """Construct a forward graph"""
+        src = self.feature_extractor(inputs)
+        src = self.feature_maps(src)
+        locs, confs = self.box(src)
+        return locs, confs
+
+
+def ssd_inception_v2(**kwargs):
+    """Build SSD-InceltionV2"""
+    return SSDInceptionV2(**kwargs)

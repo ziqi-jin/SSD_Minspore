@@ -16,8 +16,18 @@
 
 from mindspore.common.initializer import initializer, TruncatedNormal
 
+
 def init_net_param(network, initialize_mode='TruncatedNormal'):
-    """Init the parameters in net."""
+    """
+    Init the parameters in net
+
+    Args:
+        network: Network to init parameters
+        initialize_mode: Mode of parameters initializer
+
+    Returns:
+
+    """
     params = network.trainable_params()
     for p in params:
         if 'beta' not in p.name and 'gamma' not in p.name and 'bias' not in p.name:
@@ -28,7 +38,16 @@ def init_net_param(network, initialize_mode='TruncatedNormal'):
 
 
 def load_backbone_params(network, param_dict):
-    """Init the parameters from pre-train model, default is mobilenetv2."""
+    """
+    Init the parameters from pre-train model
+
+    Args:
+        network: Network to load parameters
+        param_dict: Dict with parameters to load into model
+
+    Returns:
+
+    """
     for _, param in network.parameters_and_names():
         param_name = param.name.replace('network.backbone.', '')
         name_split = param_name.split('.')
@@ -39,8 +58,21 @@ def load_backbone_params(network, param_dict):
         if param_name in param_dict:
             param.set_data(param_dict[param_name].data)
 
-def filter_checkpoint_parameter(param_dict):
-    """remove useless parameters"""
+
+def filter_checkpoint_parameter_by_list(param_dict, filter_list):
+    """
+    Remove useless parameters according to filter_list
+
+    Args:
+        param_dict: Dict with parameters to filter
+        filter_list: List of names to filter from parameters dict
+
+    Returns:
+
+    """
     for key in list(param_dict.keys()):
-        if 'multi_loc_layers' in key or 'multi_cls_layers' in key:
-            del param_dict[key]
+        for name in filter_list:
+            if name in key:
+                print("Delete parameter from checkpoint: ", key)
+                del param_dict[key]
+                break

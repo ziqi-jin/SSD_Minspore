@@ -16,6 +16,9 @@
 """Train SSD and get checkpoint files."""
 
 import os
+import argparse
+import ast
+import mindspore.common.dtype as mstype
 import mindspore.nn as nn
 from mindspore import context, Tensor
 from mindspore.communication.management import init, get_rank
@@ -23,171 +26,123 @@ from mindspore.train.callback import CheckpointConfig, ModelCheckpoint, LossMoni
 from mindspore.train import Model
 from mindspore.context import ParallelMode
 from mindspore.train.serialization import load_checkpoint, load_param_into_net
-from mindspore.common import set_seed, dtype
-
-from src.ssd import SsdInferWithDecoder, SSDWithLossCell, TrainingWrapper, ssd_inception_v2
+from mindspore.common import set_seed
+from src.ssd import SSD320, SSDWithLossCell, TrainingWrapper, ssd_mobilenet_v2
+from src.config import config
 from src.dataset import create_ssd_dataset, create_mindrecord
 from src.lr_schedule import get_lr
-from src.init_params import init_net_param, filter_checkpoint_parameter_by_list
-from src.eval_callback import EvalCallBack
-from src.eval_utils import apply_eval
-from src.box_utils import default_boxes
-from src.model_utils.config import config
-from src.model_utils.moxing_adapter import moxing_wrapper
+from src.init_params import init_net_param, filter_checkpoint_parameter
 
 set_seed(1)
 
+def get_args():
+    """get arguments"""
+    parser = argparse.ArgumentParser(description="SSD training")
+    parser.add_argument("--run_platform", type=str, default="GPU", choices=("GPU"),
+                        help="run platform.")
+    parser.add_argument("--only_create_dataset", type=ast.literal_eval, default=False,
+                        help="If set it true, only create Mindrecord, default is False.")
+    parser.add_argument("--distribute", type=ast.literal_eval, default=False,
+                        help="Run distribute, default is False.")
+    parser.add_argument("--device_id", type=int, default=0, help="Device id, default is 0.")
+    parser.add_argument("--device_num", type=int, default=1, help="Use device nums, default is 1.")
+    parser.add_argument("--lr", type=float, default=0.05, help="Learning rate, default is 0.05.")
+    parser.add_argument("--mode", type=str, default="sink", help="Run sink mode or not, default is sink.")
+    parser.add_argument("--dataset", type=str, default="coco", help="Dataset, default is coco.")
+    parser.add_argument('--data_url', type=str, default=None, help='Dataset path')
+    parser.add_argument('--train_url', type=str, default=None, help='Train output path')
+    parser.add_argument('--modelarts_mode', type=ast.literal_eval, default=False,
+                        help='train on modelarts or not, default is False')
+    parser.add_argument('--mindrecord_mode', type=str, default="mindrecord", choices=("coco", "mindrecord"),
+                        help='type of data, default is mindrecord')
+    parser.add_argument("--epoch_size", type=int, default=500, help="Epoch size, default is 500.")
+    parser.add_argument("--batch_size", type=int, default=32, help="Batch size, default is 32.")
+    parser.add_argument("--pre_trained", type=str, default=None, help="Pretrained Checkpoint file path.")
+    parser.add_argument("--pre_trained_epoch_size", type=int, default=0, help="Pretrained epoch size.")
+    parser.add_argument("--save_checkpoint_epochs", type=int, default=10, help="Save checkpoint epochs, default is 10.")
+    parser.add_argument("--loss_scale", type=int, default=1024, help="Loss scale, default is 1024.")
+    parser.add_argument("--filter_weight", type=ast.literal_eval, default=False,
+                        help="Filter head weight parameters, default is False.")
+    parser.add_argument('--freeze_layer', type=str, default="none", choices=["none", "backbone"],
+                        help="freeze the weights of network, support freeze the backbone's weights, "
+                             "default is not freezing.")
+    args_opt = parser.parse_args()
+    return args_opt
 
-def ssd_model_build():
-    """
-    Build SSD model with selected backbone
-
-    Returns:
-        SSD model
-    """
-    if config.model_name == "ssd_inception_v2":
-        ssd = ssd_inception_v2(config=config)
-        init_net_param(ssd)
-        if config.feature_extractor_base_param != "":
-            param_dict = load_checkpoint(config.feature_extractor_base_param)
-            for x in list(param_dict.keys()):
-                param_dict["network.feature_extractor." + x] = param_dict[x]
-                del param_dict[x]
-            load_param_into_net(ssd.feature_extractor, param_dict)
+def main():
+    args_opt = get_args()
+    context.set_context(mode=context.PYNATIVE_MODE, device_target=args_opt.run_platform)
+    if args_opt.distribute:
+        if os.getenv("DEVICE_ID", "not_set").isdigit():
+            context.set_context(device_id=int(os.getenv("DEVICE_ID")))
+        device_num = args_opt.device_num
+        context.reset_auto_parallel_context()
+        context.set_auto_parallel_context(parallel_mode=ParallelMode.DATA_PARALLEL, gradients_mean=True,
+                                          device_num=device_num)
+        init()
+        context.set_auto_parallel_context(all_reduce_fusion_config=[29, 58, 89])
+        rank = get_rank()
+        print('rank is ',rank)
     else:
-        raise ValueError(f'config.model: {config.model_name} is not supported')
-    return ssd
-
-
-def set_graph_kernel_context(device_target, model):
-    """
-    Setup context for graph kernel
-
-    Args:
-        device_target: Name of target device for training
-        model: Model name
-
-    Returns:
-
-    """
-    if device_target == "GPU" and model == "ssd300":
-        # Enable graph kernel for default model ssd300 on GPU back-end.
-        context.set_context(enable_graph_kernel=True,
-                            graph_kernel_flags="--enable_parallel_fusion --enable_expand_ops=Conv2D")
-
-
-def _prepare_environment():
-    """Prepare the context and update configuration"""
-    rank = 0
-    device_num = 1
-    if config.device_target == "CPU":
-        context.set_context(mode=context.GRAPH_MODE, device_target="CPU")
-    else:
-        context.set_context(mode=context.GRAPH_MODE, device_target=config.device_target, device_id=config.device_id)
-        set_graph_kernel_context(config.device_target, config.model_name)
-        if config.run_distribute:
-            device_num = config.device_num
-            context.reset_auto_parallel_context()
-            context.set_auto_parallel_context(parallel_mode=ParallelMode.DATA_PARALLEL, gradients_mean=True,
-                                              device_num=device_num)
-            init()
-            if config.all_reduce_fusion_config:
-                context.set_auto_parallel_context(all_reduce_fusion_config=config.all_reduce_fusion_config)
-            rank = get_rank()
-
-    config.rank = rank
-    config.device_num = device_num
-
-
-@moxing_wrapper()
-def train_net():
-    """Build and train SSD-InceptionV2 model"""
-    if hasattr(config, 'num_ssd_boxes') and config.num_ssd_boxes == -1:
-        num = 0
-        h, w = config.img_shape
-        for i in range(len(config.steps)):
-            num += (h // config.steps[i]) * (w // config.steps[i]) * config.num_default[i]
-        config.num_ssd_boxes = num
-
-    _prepare_environment()
-
-    rank = config.rank
-    device_num = config.device_num
-
-    mindrecord_file = create_mindrecord(config.dataset, "ssd.mindrecord", True)
-
-    if config.only_create_dataset:
+        rank = 0
+        device_num = 1
+        context.set_context(device_id=args_opt.device_id)
+    mindrecord_file = create_mindrecord(args_opt.dataset, "ssd.mindrecord", True)
+    if args_opt.only_create_dataset:
+        if args_opt.modelarts_mode:
+            mox.file.copy_parallel(config.mindrecord_dir, args_opt.train_url)
         return
 
-    loss_scale = float(config.loss_scale)
-    if config.device_target == "CPU":
-        loss_scale = 1.0
+    loss_scale = float(args_opt.loss_scale)
 
     # When create MindDataset, using the fitst mindrecord file, such as ssd.mindrecord0.
-    use_multiprocessing = (config.device_target != "CPU")
-    dataset = create_ssd_dataset(mindrecord_file, repeat_num=1, batch_size=config.batch_size,
-                                 device_num=device_num, rank=rank, use_multiprocessing=use_multiprocessing)
+    dataset = create_ssd_dataset(mindrecord_file, repeat_num=1, batch_size=args_opt.batch_size,
+                                 device_num=device_num, rank=rank)
 
     dataset_size = dataset.get_dataset_size()
-    print(f"Create dataset done! dataset size is {dataset_size}")
-    ssd = ssd_model_build()
-    if (hasattr(config, 'use_float16') and config.use_float16):
-        ssd.to_float(dtype.float16)
+    print("Create dataset done!")
+
+    backbone = ssd_mobilenet_v2()
+    ssd = SSD320(backbone=backbone, config=config)
     net = SSDWithLossCell(ssd, config)
+    # net.to_float(mstype.float16)
+
+    init_net_param(net)
 
     # checkpoint
-    ckpt_config = CheckpointConfig(save_checkpoint_steps=dataset_size * config.save_checkpoint_epochs)
-    ckpt_save_dir = config.output_path +'/ckpt_{}/'.format(rank)
-    ckpoint_cb = ModelCheckpoint(prefix="ssd", directory=ckpt_save_dir, config=ckpt_config)
+    ckpt_config = CheckpointConfig(save_checkpoint_steps=dataset_size * args_opt.save_checkpoint_epochs)
+    save_ckpt_path = './ckpt_' + str(rank) + '/'
+    ckpoint_cb = ModelCheckpoint(prefix="ssd", directory=save_ckpt_path, config=ckpt_config)
 
-    if config.pre_trained:
-        param_dict = load_checkpoint(config.pre_trained)
-        if config.filter_weight:
-            filter_checkpoint_parameter_by_list(param_dict, config.checkpoint_filter_list)
-        load_param_into_net(net, param_dict, True)
+    if args_opt.pre_trained:
+        param_dict = load_checkpoint(args_opt.pre_trained)
+        if args_opt.filter_weight:
+            filter_checkpoint_parameter(param_dict)
+        load_param_into_net(net, param_dict)
 
-    lr = Tensor(get_lr(global_step=config.pre_trained_epoch_size * dataset_size,
-                       lr_init=config.lr_init, lr_end=config.lr_end_rate * config.lr, lr_max=config.lr,
+    if args_opt.freeze_layer == "backbone":
+        for param in backbone.feature_1.trainable_params():
+            param.requires_grad = False
+
+    lr = Tensor(get_lr(global_step=args_opt.pre_trained_epoch_size * dataset_size,
+                       lr_init=config.lr_init, lr_end=config.lr_end_rate * args_opt.lr, lr_max=args_opt.lr,
                        warmup_epochs=config.warmup_epochs,
-                       total_epochs=config.epoch_size,
+                       total_epochs=args_opt.epoch_size,
                        steps_per_epoch=dataset_size))
 
-    if hasattr(config, 'use_global_norm') and config.use_global_norm:
-        opt = nn.Momentum(filter(lambda x: x.requires_grad, net.get_parameters()), lr,
-                          config.momentum, config.weight_decay, 1.0)
-        net = TrainingWrapper(net, opt, loss_scale, True)
-    else:
-        opt = nn.Momentum(filter(lambda x: x.requires_grad, net.get_parameters()), lr,
-                          config.momentum, config.weight_decay, loss_scale)
-        net = TrainingWrapper(net, opt, loss_scale)
+    opt = nn.Momentum(filter(lambda x: x.requires_grad, net.get_parameters()), lr,
+                      config.momentum, config.weight_decay, loss_scale)
+    net = TrainingWrapper(net, opt, loss_scale)
 
     callback = [TimeMonitor(data_size=dataset_size), LossMonitor(), ckpoint_cb]
-    if config.run_eval:
-        eval_net = SsdInferWithDecoder(ssd, Tensor(default_boxes), config)
-        eval_net.set_train(False)
-        mindrecord_file = create_mindrecord(config.dataset, "ssd_eval.mindrecord", False)
-        eval_dataset = create_ssd_dataset(mindrecord_file, batch_size=config.batch_size, repeat_num=1,
-                                          is_training=False, use_multiprocessing=False)
-        if config.dataset == "coco":
-            anno_json = os.path.join(config.coco_root, config.instances_set.format(config.val_data_type))
-        elif config.dataset == "voc":
-            anno_json = os.path.join(config.voc_root, config.voc_json)
-        else:
-            raise ValueError('SSD eval only support dataset mode is coco and voc!')
-        eval_param_dict = {"net": eval_net, "dataset": eval_dataset, "anno_json": anno_json}
-        eval_cb = EvalCallBack(apply_eval, eval_param_dict, interval=config.eval_interval,
-                               eval_start_epoch=config.eval_start_epoch, save_best_ckpt=True,
-                               ckpt_directory=ckpt_save_dir, besk_ckpt_name="best_map.ckpt",
-                               metrics_name="mAP")
-        callback.append(eval_cb)
     model = Model(net)
     dataset_sink_mode = False
-    if config.mode_sink == "sink" and config.device_target != "CPU":
+    if args_opt.mode == "sink":
         print("In sink mode, one epoch return a loss.")
         dataset_sink_mode = True
     print("Start train SSD, the first epoch will be slower because of the graph compilation.")
-    model.train(config.epoch_size, dataset, callbacks=callback, dataset_sink_mode=dataset_sink_mode)
-
-
+    model.train(args_opt.epoch_size, dataset, callbacks=callback, dataset_sink_mode=dataset_sink_mode)
+    if args_opt.modelarts_mode:
+        mox.file.copy_parallel(save_ckpt_path, args_opt.train_url)
 if __name__ == '__main__':
-    train_net()
+    main()

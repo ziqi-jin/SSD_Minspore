@@ -17,26 +17,45 @@
 
 from __future__ import division
 
-import os
 import json
+import multiprocessing
+import os
 import xml.etree.ElementTree as et
-import numpy as np
-import cv2
 
-import mindspore.dataset as de
-import mindspore.dataset.vision.c_transforms as C
+import cv2
+import numpy as np
+from mindspore import dataset as de
+from mindspore.dataset.vision import c_transforms as C
 from mindspore.mindrecord import FileWriter
-from .config import config
+
+from src.model_utils.config import config
 from .box_utils import jaccard_numpy, ssd_bboxes_encode
 
 
 def _rand(a=0., b=1.):
-    """Generate random."""
+    """
+    Generate random between a and b
+    Args:
+        a: Minimal random value
+        b: Maximum random value
+
+    Returns:
+        Random value between a and b
+    """
     return np.random.rand() * (b - a) + a
 
 
 def get_imageId_from_fileName(filename, id_iter):
-    """Get imageID from fileName if fileName is int, else return id_iter."""
+    """
+    Get imageID from fileName if fileName is number, else return id_iter
+
+    Args:
+        filename: Name of file
+        id_iter: Number of iteration
+
+    Returns:
+        ID of image
+    """
     filename = os.path.splitext(filename)[0]
     if filename.isdigit():
         return int(filename)
@@ -44,7 +63,16 @@ def get_imageId_from_fileName(filename, id_iter):
 
 
 def random_sample_crop(image, boxes):
-    """Random Crop the image and boxes"""
+    """
+    Random Crop the image and boxes
+
+    Args:
+        image: Image from dataset
+        boxes: List of boxes to crop
+
+    Returns:
+        Cropped images and boxes
+    """
     height, width, _ = image.shape
     min_iou = np.random.choice([None, 0.1, 0.3, 0.5, 0.7, 0.9])
 
@@ -103,10 +131,22 @@ def random_sample_crop(image, boxes):
 
 
 def preprocess_fn(img_id, image, box, is_training):
-    """Preprocess function for dataset."""
+    """
+    Preprocess function for dataset
+
+    Args:
+        img_id: ID of image
+        image: nd.array with image
+        box: Bounding box for target object
+        is_training: Flag, is it training mode
+
+    Returns:
+        Augmented data
+    """
     cv2.setNumThreads(2)
 
     def _infer_data(image, input_shape):
+        """Infer data"""
         img_h, img_w, _ = image.shape
         input_h, input_w = input_shape
 
@@ -158,7 +198,15 @@ def preprocess_fn(img_id, image, box, is_training):
 
 
 def create_voc_label(is_training):
-    """Get image path and annotation from VOC."""
+    """
+    Get image path and annotation from VOC
+
+    Args:
+        is_training: Flag, is it training mode
+
+    Returns:
+        Prepared VOC labels
+    """
     voc_root = config.voc_root
     cls_map = {name: i for i, name in enumerate(config.classes)}
     sub_dir = 'train' if is_training else 'eval'
@@ -250,10 +298,18 @@ def create_voc_label(is_training):
 
 
 def create_coco_label(is_training):
-    """Get image path and annotation from COCO."""
+    """
+    Get image path and annotation from COCO
+
+    Args:
+        is_training: Flag, is it training mode
+
+    Returns:
+        Prepared COCO labels
+    """
     from pycocotools.coco import COCO
 
-    coco_root = config.coco_root
+    coco_root = os.path.join(config.data_path, config.coco_root)
     data_type = config.val_data_type
     if is_training:
         data_type = config.train_data_type
@@ -305,7 +361,15 @@ def create_coco_label(is_training):
 
 
 def anno_parser(annos_str):
-    """Parse annotation from string to list."""
+    """
+    Parse annotation from string to list
+
+    Args:
+        annos_str: String with annotations
+
+    Returns:
+        List with annotations
+    """
     annos = []
     for anno_str in annos_str:
         anno = list(map(int, anno_str.strip().split(',')))
@@ -314,7 +378,16 @@ def anno_parser(annos_str):
 
 
 def filter_valid_data(image_dir, anno_path):
-    """Filter valid image file, which both in image_dir and anno_path."""
+    """
+    Filter valid image file, which both in image_dir and anno_path
+
+    Args:
+        image_dir: Path to directory with images
+        anno_path: Path to file with annotations
+
+    Returns:
+        Filtered validation data
+    """
     images = []
     image_path_dict = {}
     image_anno_dict = {}
@@ -339,7 +412,18 @@ def filter_valid_data(image_dir, anno_path):
 
 
 def voc_data_to_mindrecord(mindrecord_dir, is_training, prefix="ssd.mindrecord", file_num=8):
-    """Create MindRecord file by image_dir and anno_path."""
+    """
+    Create MindRecord file by image_dir and anno_path
+
+    Args:
+        mindrecord_dir: Directory with mindrecord for VOC dataset
+        is_training: Flag, if it is training mode
+        prefix: Prefix for filename
+        file_num: Number of files to save
+
+    Returns:
+
+    """
     mindrecord_path = os.path.join(mindrecord_dir, prefix)
     writer = FileWriter(mindrecord_path, file_num)
     images, image_path_dict, image_anno_dict = create_voc_label(is_training)
@@ -363,7 +447,18 @@ def voc_data_to_mindrecord(mindrecord_dir, is_training, prefix="ssd.mindrecord",
 
 
 def data_to_mindrecord_byte_image(dataset="coco", is_training=True, prefix="ssd.mindrecord", file_num=8):
-    """Create MindRecord file."""
+    """
+    Create MindRecord file
+
+    Args:
+        dataset: Name of dataset
+        is_training: Flag, if it is training mode
+        prefix: Prefix for filename
+        file_num: Number of files to save
+
+    Returns:
+
+    """
     mindrecord_dir = config.mindrecord_dir
     mindrecord_path = os.path.join(mindrecord_dir, prefix)
     writer = FileWriter(mindrecord_path, file_num)
@@ -391,8 +486,27 @@ def data_to_mindrecord_byte_image(dataset="coco", is_training=True, prefix="ssd.
 
 
 def create_ssd_dataset(mindrecord_file, batch_size=32, repeat_num=10, device_num=1, rank=0,
-                       is_training=True, num_parallel_workers=64, use_multiprocessing=True):
-    """Create SSD dataset with MindDataset."""
+                       is_training=True, num_parallel_workers=6, use_multiprocessing=True):
+    """
+    Create SSD dataset with MindDataset
+
+    Args:
+        mindrecord_file: Filename of mindrecord file
+        batch_size: Size of data batch
+        repeat_num: Number of repeats of data
+        device_num: Number of devices
+        rank: ID of current device
+        is_training: Flag, if it is training mode
+        num_parallel_workers: Number of parallel workers
+        use_multiprocessing: Flag to use multiplication
+
+    Returns:
+        Dataset
+    """
+    cores = multiprocessing.cpu_count()
+    if cores < num_parallel_workers:
+        print("The num_parallel_workers {} is set too large, now set it {}".format(num_parallel_workers, cores))
+        num_parallel_workers = cores
     ds = de.MindDataset(mindrecord_file, columns_list=["img_id", "image", "annotation"], num_shards=device_num,
                         shard_id=rank, num_parallel_workers=num_parallel_workers, shuffle=is_training)
     decode = C.Decode()
@@ -420,18 +534,32 @@ def create_ssd_dataset(mindrecord_file, batch_size=32, repeat_num=10, device_num
 
 
 def create_mindrecord(dataset="coco", prefix="ssd.mindrecord", is_training=True):
-    """create mindrecord file"""
+    """
+    Create mindrecords for selected dataset
+
+    Args:
+        dataset: Name of dataset
+        prefix: Prefix for filename
+        is_training: Flag, if it is training mode
+
+    Returns:
+        Mindrecord file
+    """
+
     print("Start create dataset!")
+
     # It will generate mindrecord file in config_inc.mindrecord_dir,
     # and the file name is ssd.mindrecord0, 1, ... file_num.
 
-    mindrecord_dir = config.mindrecord_dir
+    mindrecord_dir = os.path.join(config.data_path, config.mindrecord_dir)
     mindrecord_file = os.path.join(mindrecord_dir, prefix + "0")
     if not os.path.exists(mindrecord_file):
         if not os.path.isdir(mindrecord_dir):
+            print('mindrecord_dir:', mindrecord_dir)
             os.makedirs(mindrecord_dir)
         if dataset == "coco":
-            if os.path.isdir(config.coco_root):
+            coco_root = os.path.join(config.data_path, config.coco_root)
+            if os.path.isdir(coco_root):
                 print("Create Mindrecord.")
                 data_to_mindrecord_byte_image("coco", is_training, prefix)
                 print("Create Mindrecord Done, at {}".format(mindrecord_dir))

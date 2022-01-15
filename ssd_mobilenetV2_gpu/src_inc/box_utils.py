@@ -15,10 +15,14 @@
 
 """Bbox utils"""
 
-import math
 import itertools as it
+import math
+
 import numpy as np
-from .config import config
+from src.model_utils.config import config
+
+from .anchor_generator import GridAnchorGenerator
+
 
 class GeneratDefaultBoxes():
     """
@@ -54,14 +58,20 @@ class GeneratDefaultBoxes():
                     self.default_boxes.append([cy, cx, h, w])
 
         def to_tlbr(cy, cx, h, w):
+            """Change the coordinates representation"""
             return cy - h / 2, cx - w / 2, cy + h / 2, cx + w / 2
 
         # For IoU calculation
         self.default_boxes_tlbr = np.array(tuple(to_tlbr(*i) for i in self.default_boxes), dtype='float32')
         self.default_boxes = np.array(self.default_boxes, dtype='float32')
 
-default_boxes_tlbr = GeneratDefaultBoxes().default_boxes_tlbr
-default_boxes = GeneratDefaultBoxes().default_boxes
+
+if hasattr(config, 'use_anchor_generator') and config.use_anchor_generator:
+    generator = GridAnchorGenerator(config.img_shape, 4, 2, [1.0, 2.0, 0.5])
+    default_boxes, default_boxes_tlbr = generator.generate_multi_levels(config.steps)
+else:
+    default_boxes_tlbr = GeneratDefaultBoxes().default_boxes_tlbr
+    default_boxes = GeneratDefaultBoxes().default_boxes
 y1, x1, y2, x2 = np.split(default_boxes_tlbr[:, :4], 4, axis=-1)
 vol_anchors = (x2 - x1) * (y2 - y1)
 matching_threshold = config.match_threshold
@@ -131,7 +141,14 @@ def ssd_bboxes_encode(boxes):
 
 
 def ssd_bboxes_decode(boxes):
-    """Decode predict boxes to [y, x, h, w]"""
+    """
+    Decode predict boxes to [y, x, h, w]
+    Args:
+        boxes: Bounding boxes from SSD
+
+    Returns:
+        Decoded boxes in the [y, x, h, w] format
+    """
     boxes_t = boxes.copy()
     default_boxes_t = default_boxes.copy()
     boxes_t[:, :2] = boxes_t[:, :2] * config.prior_scaling[0] * default_boxes_t[:, 2:] + default_boxes_t[:, :2]
@@ -146,7 +163,16 @@ def ssd_bboxes_decode(boxes):
 
 
 def intersect(box_a, box_b):
-    """Compute the intersect of two sets of boxes."""
+    """
+    Compute the intersect of two sets of boxes
+
+    Args:
+        box_a: One box
+        box_b: Another box
+
+    Returns:
+        Intersection of boxes
+    """
     max_yx = np.minimum(box_a[:, 2:4], box_b[2:4])
     min_yx = np.maximum(box_a[:, :2], box_b[:2])
     inter = np.clip((max_yx - min_yx), a_min=0, a_max=np.inf)
@@ -154,7 +180,16 @@ def intersect(box_a, box_b):
 
 
 def jaccard_numpy(box_a, box_b):
-    """Compute the jaccard overlap of two sets of boxes."""
+    """
+    Compute the jaccard overlap of two sets of boxes
+
+    Args:
+        box_a: One box
+        box_b: Another box
+
+    Returns:
+        Jaccard between boxes
+    """
     inter = intersect(box_a, box_b)
     area_a = ((box_a[:, 2] - box_a[:, 0]) *
               (box_a[:, 3] - box_a[:, 1]))

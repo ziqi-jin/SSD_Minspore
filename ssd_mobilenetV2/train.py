@@ -104,6 +104,7 @@ def main():
             init()
             context.set_auto_parallel_context(all_reduce_fusion_config=[29, 58, 89])
             rank = get_rank()
+            print('rank is ',rank)
         else:
             rank = 0
             device_num = 1

@@ -38,7 +38,7 @@ set_seed(1)
 def get_args():
     """get arguments"""
     parser = argparse.ArgumentParser(description="SSD training")
-    parser.add_argument("--run_platform", type=str, default="Ascend", choices=("Ascend"),
+    parser.add_argument("--run_platform", type=str, default="GPU", choices=("GPU"),
                         help="run platform.")
     parser.add_argument("--only_create_dataset", type=ast.literal_eval, default=False,
                         help="If set it true, only create Mindrecord, default is False.")

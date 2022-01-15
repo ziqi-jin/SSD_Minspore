@@ -127,7 +127,7 @@ def main():
     backbone = ssd_mobilenet_v2()
     ssd = SSD320(backbone=backbone, config=config)
     net = SSDWithLossCell(ssd, config)
-    net.to_float(mstype.float16)
+    # net.to_float(mstype.float16)
 
     init_net_param(net)
 

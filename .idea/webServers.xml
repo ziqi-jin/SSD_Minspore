@@ -9,6 +9,13 @@
           </advancedOptions>
         </fileTransfer>
       </webServer>
+      <webServer id="caf93d27-76c7-484c-af2c-06d22396c5cb" name="mindspore" url="http:///">
+        <fileTransfer accessType="SFTP" host="localhost" port="5451" sshConfigId="307630ee-2292-47cd-8ddb-dd70bf548c97" sshConfig="mindspore@localhost:5451 password">
+          <advancedOptions>
+            <advancedOptions dataProtectionLevel="Private" passiveMode="true" shareSSLContext="true" />
+          </advancedOptions>
+        </fileTransfer>
+      </webServer>
     </option>
   </component>
 </project>

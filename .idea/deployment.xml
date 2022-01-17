@@ -1,11 +1,11 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <project version="4">
-  <component name="PublishConfigData" autoUpload="Always" serverName="jinziqi@172.31.71.195:22 password" remoteFilesAllowedToDisappearOnAutoupload="false">
+  <component name="PublishConfigData" autoUpload="Always" serverName="mindspore@localhost:5451 password" remoteFilesAllowedToDisappearOnAutoupload="false">
     <serverData>
       <paths name="195">
         <serverdata>
           <mappings>
-            <mapping deploy="/SSD_Mindspore" local="$PROJECT_DIR$" web="/" />
+            <mapping deploy="/" local="$PROJECT_DIR$" web="/" />
           </mappings>
         </serverdata>
       </paths>
@@ -27,6 +27,27 @@
         <serverdata>
           <mappings>
             <mapping local="$PROJECT_DIR$" web="/" />
+          </mappings>
+        </serverdata>
+      </paths>
+      <paths name="jinziqi@172.31.71.195:22 password (1)">
+        <serverdata>
+          <mappings>
+            <mapping local="$PROJECT_DIR$" web="/" />
+          </mappings>
+        </serverdata>
+      </paths>
+      <paths name="mindspore">
+        <serverdata>
+          <mappings>
+            <mapping deploy="/home/mindspore/SSD_Minspore" local="$PROJECT_DIR$" web="/" />
+          </mappings>
+        </serverdata>
+      </paths>
+      <paths name="mindspore@localhost:5451 password">
+        <serverdata>
+          <mappings>
+            <mapping deploy="/tmp/pycharm_project_80" local="$PROJECT_DIR$" />
           </mappings>
         </serverdata>
       </paths>
